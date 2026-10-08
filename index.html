@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Parallel Reduction Benchmark: Flat Loop vs Top-Down Task Tree</title>
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --card-bg: #1e293b;
+            --accent-blue: #38bdf8;
+            --accent-green: #4ade80;
+            --accent-purple: #c084fc;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --border-color: #334155;
+        }
+
+        body {
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            margin: 0;
+            padding: 24px;
+            display: flex;
+            justify-content: center;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 1100px;
+        }
+
+        header {
+            margin-bottom: 24px;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 16px;
+        }
+
+        h1 {
+            font-size: 1.5rem;
+            margin: 0 0 8px 0;
+            color: var(--accent-blue);
+        }
+
+        p.subtitle {
+            margin: 0;
+            color: var(--text-muted);
+            font-size: 0.9rem;
+        }
+
+        .controls-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 24px;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            align-items: end;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        label {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            font-weight: 600;
+        }
+
+        input, select {
+            background: #0f172a;
+            border: 1px solid var(--border-color);
+            color: var(--text-main);
+            padding: 10px;
+            border-radius: 6px;
+            font-size: 0.95rem;
+        }
+
+        button {
+            background: var(--accent-blue);
+            color: #0f172a;
+            font-weight: 700;
+            border: none;
+            padding: 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            font-size: 0.95rem;
+        }
+
+        button:hover {
+            opacity: 0.9;
+            transform: translateY(-1px);
+        }
+
+        button:disabled {
+            background: var(--border-color);
+            color: var(--text-muted);
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .status-box {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 24px;
+            font-family: monospace;
+            font-size: 0.9rem;
+            color: var(--accent-green);
+            min-height: 24px;
+        }
+
+        .telemetry-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: var(--card-bg);
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid var(--border-color);
+        }
+
+        .telemetry-table th, .telemetry-table td {
+            padding: 12px 16px;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+            font-size: 0.9rem;
+        }
+
+        .telemetry-table th {
+            background: #111827;
+            color: var(--text-muted);
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 0.75rem;
+            letter-spacing: 0.05em;
+        }
+
+        .telemetry-table tr:last-child td {
+            border-bottom: none;
+        }
+
+        .highlight-flat {
+            color: var(--accent-blue);
+            font-weight: 600;
+        }
+
+        .highlight-tree {
+            color: var(--accent-purple);
+            font-weight: 600;
+        }
+
+        .badge {
+            background: rgba(56, 189, 248, 0.1);
+            color: var(--accent-blue);
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.8rem;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <header>
+        <h1>Parallel Reduction Benchmark</h1>
+        <p class="subtitle">Comparing Web Worker Flat Loop Chunking vs Top-Down Task Tree Parallelism in JavaScript</p>
+    </header>
+
+    <div class="controls-card">
+        <div class="form-group">
+            <label for="arraySize">Array Size (Elements)</label>
+            <select id="arraySize">
+                <option value="10000000">10 Million (~40 MB)</option>
+                <option value="32000000" selected>32 Million (~128 MB)</option>
+                <option value="64000000">64 Million (~256 MB)</option>
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label for="cutoffK">Tree Task Cutoff Size</label>
+            <select id="cutoffK">
+                <option value="32768">32,768 Elements</option>
+                <option value="65536" selected>65,536 Elements</option>
+                <option value="131072">131,072 Elements</option>
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label for="threads">Worker Threads</label>
+            <input type="number" id="threads" min="1" max="64" value="8">
+        </div>
+
+        <button id="runBtn" onclick="startBenchmark()">Run Benchmark</button>
+    </div>
+
+    <div id="status" class="status-box">Ready to start benchmark...</div>
+
+    <table class="telemetry-table">
+        <thead>
+            <tr>
+                <th>Metric Probe</th>
+                <th>Default Flat Loop</th>
+                <th>Top-Down Task Tree</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>Total Execution Time</td>
+                <td id="flatTime" class="highlight-flat">-</td>
+                <td id="treeTime" class="highlight-tree">-</td>
+            </tr>
+            <tr>
+                <td>Absolute Speedup vs Seq</td>
+                <td id="flatSpeedup">-</td>
+                <td id="treeSpeedup">-</td>
+            </tr>
+            <tr>
+                <td>Parallel Efficiency</td>
+                <td id="flatEfficiency">-</td>
+                <td id="treeEfficiency">-</td>
+            </tr>
+            <tr>
+                <td>Memory Bandwidth</td>
+                <td id="flatBw">-</td>
+                <td id="treeBw">-</td>
+            </tr>
+            <tr>
+                <td>Compute Throughput</td>
+                <td id="flatThroughput">-</td>
+                <td id="treeThroughput">-</td>
+            </tr>
+            <tr>
+                <td>Tasks Spawned</td>
+                <td>N/A (Static Slices)</td>
+                <td id="treeTasks">-</td>
+            </tr>
+            <tr>
+                <td>Min Worker Time</td>
+                <td id="flatMinWorker">-</td>
+                <td id="treeMinWorker">-</td>
+            </tr>
+            <tr>
+                <td>Max Worker Time</td>
+                <td id="flatMaxWorker">-</td>
+                <td id="treeMaxWorker">-</td>
+            </tr>
+            <tr>
+                <td>Avg Worker Time</td>
+                <td id="flatAvgWorker">-</td>
+                <td id="treeAvgWorker">-</td>
+            </tr>
+            <tr>
+                <td>Worker Load Imbalance</td>
+                <td id="flatImbalance">-</td>
+                <td id="treeImbalance">-</td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+
+<script>
+// Auto-detect hardware threads
+document.getElementById('threads').value = navigator.hardwareConcurrency || 4;
+
+// Worker Script generated as an inline Blob
+const workerCode = `
+self.onmessage = function(e) {
+    const { taskId, start, end } = e.data;
+    const t0 = performance.now();
+
+    // Deterministic arithmetic reduction kernel: sum = (i % 17) - 8
+    let sum = 0n;
+    for (let i = start; i < end; i++) {
+        sum += BigInt((i % 17) - 8);
+    }
+
+    const t1 = performance.now();
+    self.postMessage({ taskId, sum: sum.toString(), timeMs: t1 - t0 });
+};
+`;
+
+const workerBlob = new Blob([workerCode], { type: 'application/javascript' });
+const workerUrl = URL.createObjectURL(workerBlob);
+
+function updateStatus(msg) {
+    document.getElementById('status').innerText = msg;
+}
+
+// Sequential Baseline Run
+function runSequential(n) {
+    const t0 = performance.now();
+    let sum = 0n;
+    for (let i = 0; i < n; i++) {
+        sum += BigInt((i % 17) - 8);
+    }
+    const t1 = performance.now();
+    return { sum, timeMs: t1 - t0 };
+}
+
+async function startBenchmark() {
+    const btn = document.getElementById('runBtn');
+    btn.disabled = true;
+
+    const n = parseInt(document.getElementById('arraySize').value);
+    const cutoff = parseInt(document.getElementById('cutoffK').value);
+    const numThreads = parseInt(document.getElementById('threads').value);
+
+    // 1. Run Sequential Reference
+    updateStatus("Running Sequential Baseline...");
+    await new Promise(r => setTimeout(r, 50));
+    const seqResult = runSequential(n);
+    const seqTimeSec = seqResult.timeMs / 1000.0;
+
+    updateStatus(`Sequential Baseline Complete (${seqResult.timeMs.toFixed(2)} ms). Testing Flat Loop Workers...`);
+    await new Promise(r => setTimeout(r, 50));
+
+    // Spawn Worker Pool
+    const workers = Array.from({ length: numThreads }, () => new Worker(workerUrl));
+
+    // 2. Run Flat Loop Parallel Reduction
+    const flatProbe = await runFlatBenchmark(workers, n, numThreads, seqTimeSec);
+
+    updateStatus("Flat Loop Complete. Testing Top-Down Task Tree Reduction...");
+    await new Promise(r => setTimeout(r, 50));
+
+    // 3. Run Top-Down Task Tree Reduction
+    const treeProbe = await runTreeBenchmark(workers, n, cutoff, numThreads, seqTimeSec);
+
+    // Cleanup Workers
+    workers.forEach(w => w.terminate());
+
+    // Sanity Verification
+    if (flatProbe.sum !== seqResult.sum || treeProbe.sum !== seqResult.sum) {
+        updateStatus(`[ERROR] Result Mismatch! Seq: ${seqResult.sum}, Flat: ${flatProbe.sum}, Tree: ${treeProbe.sum}`);
+    } else {
+        updateStatus(`[VERIFIED] Match! All methods computed correct reduction sum: ${seqResult.sum}`);
+    }
+
+    // Populate Results Table
+    displayMetrics('flat', flatProbe, numThreads);
+    displayMetrics('tree', treeProbe, numThreads);
+
+    document.getElementById('treeTasks').innerText = treeProbe.tasksSpawned.toLocaleString();
+
+    btn.disabled = false;
+}
+
+// ----------------------------------------------------------------------------
+// Flat Parallel Reduction Implementation
+// ----------------------------------------------------------------------------
+function runFlatBenchmark(workers, n, numThreads, seqTimeSec) {
+    return new Promise(resolve => {
+        const chunkSize = Math.floor(n / numThreads);
+        const tStart = performance.now();
+        const workerTimes = [];
+        let completed = 0;
+        let totalSum = 0n;
+
+        for (let i = 0; i < numThreads; i++) {
+            const start = i * chunkSize;
+            const end = (i === numThreads - 1) ? n : start + chunkSize;
+
+            workers[i].onmessage = (e) => {
+                workerTimes.push(e.data.timeMs);
+                totalSum += BigInt(e.data.sum);
+                completed++;
+
+                if (completed === numThreads) {
+                    const tEnd = performance.now();
+                    const totalTimeSec = (tEnd - tStart) / 1000.0;
+                    resolve(calculateProbeMetrics(totalTimeSec, workerTimes, totalSum, n, seqTimeSec, numThreads));
+                }
+            };
+
+            workers[i].postMessage({ taskId: i, start, end });
+        }
+    });
+}
+
+// ----------------------------------------------------------------------------
+// Top-Down Task Tree Parallel Reduction Implementation
+// ----------------------------------------------------------------------------
+function runTreeBenchmark(workers, n, cutoff, numThreads, seqTimeSec) {
+    return new Promise(resolve => {
+        // Generate Binary Task Tree Nodes Top-Down
+        const tasks = [];
+        function createTasks(start, end) {
+            const len = end - start;
+            if (len <= cutoff) {
+                tasks.push({ start, end });
+                return;
+            }
+            const mid = start + Math.floor(len / 2);
+            createTasks(start, mid);
+            createTasks(mid, end);
+        }
+        createTasks(0, n);
+
+        const totalTasks = tasks.length;
+        const workerTimes = new Array(numThreads).fill(0);
+        let taskIdx = 0;
+        let completedTasks = 0;
+        let totalSum = 0n;
+        const tStart = performance.now();
+
+        // Work-Stealing Task Queue Dispatcher
+        function dispatchNext(workerIdx) {
+            if (taskIdx >= totalTasks) return;
+
+            const currentTaskIdx = taskIdx++;
+            const task = tasks[currentTaskIdx];
+
+            workers[workerIdx].onmessage = (e) => {
+                workerTimes[workerIdx] += e.data.timeMs;
+                totalSum += BigInt(e.data.sum);
+                completedTasks++;
+
+                if (completedTasks === totalTasks) {
+                    const tEnd = performance.now();
+                    const totalTimeSec = (tEnd - tStart) / 1000.0;
+                    const probe = calculateProbeMetrics(totalTimeSec, workerTimes, totalSum, n, seqTimeSec, numThreads);
+                    probe.tasksSpawned = totalTasks;
+                    resolve(probe);
+                } else {
+                    dispatchNext(workerIdx);
+                }
+            };
+
+            workers[workerIdx].postMessage({ taskId: currentTaskIdx, start: task.start, end: task.end });
+        }
+
+        // Kick off worker pool
+        for (let w = 0; w < numThreads; w++) {
+            dispatchNext(w);
+        }
+    });
+}
+
+// Metric Aggregator
+function calculateProbeMetrics(totalTimeSec, workerTimes, sum, n, seqTimeSec, numThreads) {
+    const minWorker = Math.min(...workerTimes);
+    const maxWorker = Math.max(...workerTimes);
+    const avgWorker = workerTimes.reduce((a, b) => a + b, 0) / numThreads;
+    const imbalancePct = ((maxWorker - avgWorker) / maxWorker) * 100.0;
+
+    const speedup = seqTimeSec / totalTimeSec;
+    const efficiency = (speedup / numThreads) * 100.0;
+    const bytes = n * 4; // 32-bit int
+    const bandwidthGbps = (bytes / 1e9) / totalTimeSec;
+    const melemPerSec = (n / 1e6) / totalTimeSec;
+
+    return {
+        totalTimeMs: totalTimeSec * 1000.0,
+        speedup,
+        efficiency,
+        bandwidthGbps,
+        melemPerSec,
+        minWorkerMs: minWorker,
+        maxWorkerMs: maxWorker,
+        avgWorkerMs: avgWorker,
+        imbalancePct,
+        sum
+    };
+}
+
+function displayMetrics(prefix, probe, numThreads) {
+    document.getElementById(`${prefix}Time`).innerText = `${probe.totalTimeMs.toFixed(2)} ms`;
+    document.getElementById(`${prefix}Speedup`).innerText = `${probe.speedup.toFixed(2)}x`;
+    document.getElementById(`${prefix}Efficiency`).innerText = `${probe.efficiency.toFixed(2)}%`;
+    document.getElementById(`${prefix}Bw`).innerText = `${probe.bandwidthGbps.toFixed(2)} GB/s`;
+    document.getElementById(`${prefix}Throughput`).innerText = `${probe.melemPerSec.toFixed(2)} MElem/s`;
+    document.getElementById(`${prefix}MinWorker`).innerText = `${probe.minWorkerMs.toFixed(2)} ms`;
+    document.getElementById(`${prefix}MaxWorker`).innerText = `${probe.maxWorkerMs.toFixed(2)} ms`;
+    document.getElementById(`${prefix}AvgWorker`).innerText = `${probe.avgWorkerMs.toFixed(2)} ms`;
+    document.getElementById(`${prefix}Imbalance`).innerText = `${probe.imbalancePct.toFixed(2)}%`;
+}
+</script>
+
+</body>
+</html>
