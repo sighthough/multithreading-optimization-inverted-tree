@@ -7,6 +7,8 @@ this is a way to handle multi threading so that you get more efficiency out of i
 
 *Co-authored by [sighthough](https://youtu.be/UtPiUGwu-0Q) and [Googles Gemini](https://www.youtube.com/shorts/R3Qo4rBgrD8).*
 
+feel free to rip the index file (its the tech demo) and also a guide provided for how you can make it work for your own use !
+
 
 
 ## Architectural Logic of the Top-Down Task Tree
